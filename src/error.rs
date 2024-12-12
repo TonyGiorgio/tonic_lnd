@@ -24,7 +24,6 @@ pub(crate) enum InternalConnectError {
         error: std::io::Error,
     },
     ParseCert {
-        file: PathBuf,
         error: std::io::Error,
     },
     InvalidAddress {
@@ -39,7 +38,7 @@ impl fmt::Display for ConnectError {
 
         match &self.internal {
             ReadFile { file, .. } => write!(f, "failed to read file {}", file.display()),
-            ParseCert { file, .. } => write!(f, "failed to parse certificate {}", file.display()),
+            ParseCert { .. } => write!(f, "failed to parse certificate"),
             InvalidAddress { address, .. } => write!(f, "invalid address {}", address),
         }
     }
@@ -51,7 +50,7 @@ impl std::error::Error for ConnectError {
 
         match &self.internal {
             ReadFile { error, .. } => Some(error),
-            ParseCert { error, .. } => Some(error),
+            ParseCert { error } => Some(error),
             InvalidAddress { error, .. } => Some(&**error),
         }
     }

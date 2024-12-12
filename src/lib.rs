@@ -215,12 +215,7 @@ async fn load_macaroon(
 /// This function does all required processing of the cert file and macaroon file, so that you
 /// don't have to. The address must begin with "https://", though.
 ///
-/// This is considered the recommended way to connect to LND. An alternative function to use
-/// already-read certificate or macaroon data is currently **not** provided to discourage such use.
-/// LND occasionally changes that data which would lead to errors and in turn in worse application.
-///
-/// If you have a motivating use case for use of direct data feel free to open an issue and
-/// explain.
+/// This is considered the recommended way to connect to LND.
 #[cfg_attr(feature = "tracing", tracing::instrument(name = "Connecting to LND"))]
 pub async fn connect<CP, MP>(
     address: String,
@@ -238,6 +233,38 @@ where
         .build();
     let macaroon = load_macaroon(macaroon_file).await?;
 
+    connect_internal(connector, macaroon, address)
+}
+
+/// Connects to LND using given address and already read credentials
+///
+/// This function does all required processing after cert and macaroon have been processed.
+/// The address must begin with "https://", though.
+///
+/// The recommended way to connect is with `connect`.
+///
+/// Warning: LND occasionally changes that data which would lead to errors and in turn a
+/// worse application.
+#[cfg_attr(feature = "tracing", tracing::instrument(name = "Connecting to LND"))]
+pub async fn connect_with_parsed_files(
+    address: String,
+    tls_cert_contents: Vec<u8>,
+    macaroon: String,
+) -> Result<Client, ConnectError> {
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls::config_from_bytes(tls_cert_contents).await?)
+        .https_or_http()
+        .enable_http2()
+        .build();
+
+    connect_internal(connector, macaroon, address)
+}
+
+fn connect_internal(
+    connector: HttpsConnector<HttpConnector>,
+    macaroon: String,
+    address: String,
+) -> Result<Client, ConnectError> {
     let svc = InterceptedService::new(
         hyper::Client::builder().build(connector),
         MacaroonInterceptor { macaroon },
@@ -296,6 +323,13 @@ mod tls {
             .with_no_client_auth())
     }
 
+    pub(crate) async fn config_from_bytes(contents: Vec<u8>) -> Result<ClientConfig, ConnectError> {
+        Ok(ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(Arc::new(CertVerifier::load_from_bytes(contents)?))
+            .with_no_client_auth())
+    }
+
     pub(crate) struct CertVerifier {
         certs: Vec<Vec<u8>>,
     }
@@ -310,13 +344,16 @@ mod tls {
                     error,
                 }
             });
+            Self::load_from_bytes(contents)
+        }
+
+        pub(crate) fn load_from_bytes(
+            contents: Vec<u8>,
+        ) -> Result<CertVerifier, InternalConnectError> {
             let mut reader = &*contents;
 
             let certs = try_map_err!(rustls_pemfile::certs(&mut reader), |error| {
-                InternalConnectError::ParseCert {
-                    file: path.into(),
-                    error,
-                }
+                InternalConnectError::ParseCert { error }
             });
 
             Ok(CertVerifier { certs })
